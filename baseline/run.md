@@ -1,4 +1,5 @@
-python3 updown-baseline/scripts/train.py \
-    --config updown-baseline/configs/updown_nocaps_val.yaml \
-    --config-override OPTIM.BATCH_SIZE 1 \
-    --gpu-ids -1 --serialization-dir updown-baseline/checkpoints/updown-baseline
+python scripts/inference.py \
+    --config /path/to/config.yaml \
+    --checkpoint-path /path/to/checkpoint.pth \
+    --output-path /path/to/save/predictions.json \
+    --gpu-ids -1

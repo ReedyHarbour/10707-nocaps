@@ -8,15 +8,13 @@ from allennlp.data import Vocabulary
 from updown.config import Config
 from updown.data.readers import CocoCaptionsReader, ConstraintBoxesReader, ImageFeaturesReader
 from updown.types import (
-    TrainingInstance,
-    TrainingBatch,
     EvaluationInstance,
     EvaluationInstanceWithConstraints,
     EvaluationBatch,
     EvaluationBatchWithConstraints,
 )
-from updown.utils.constraints import ConstraintFilter, FiniteStateMachineBuilder
-
+# from updown.utils.constraints import ConstraintFilter, FiniteStateMachineBuilder
+from transformers import BertTokenizer
 
 class TrainingDataset(Dataset):
     r"""
@@ -75,28 +73,34 @@ class TrainingDataset(Dataset):
         # Number of training examples are number of captions, not number of images.
         return len(self._captions_reader)
 
-    def __getitem__(self, index: int) -> TrainingInstance:
-        image_id, caption = self._captions_reader[index]
-        image_features = self._image_features_reader[image_id]
+    def __getitem__(self, index: int):
+        if index % 2 == 1:
+            image_id, caption = self._captions_reader[index]
+            image_features = self._image_features_reader[image_id]
+            label = 1
+        else:
+            _, caption = self._captions_reader[index-1]
+            image_id, _ = self._captions_reader[index]
+            image_features = self._image_features_reader[image_id]
+            label = 0
 
-        # Tokenize caption.
-        caption_tokens: List[int] = [self._vocabulary.get_token_index(c) for c in caption]
+        visual_token_type_ids = torch.ones(image_features.shape[:-1], dtype=torch.long)
+        visual_attention_mask = torch.ones(image_features.shape[:-1], dtype=torch.float)
 
-        # Pad upto max_caption_length.
-        caption_tokens = caption_tokens[: self._max_caption_length]
-        caption_tokens.extend(
-            [self._vocabulary.get_token_index("@@UNKNOWN@@")]
-            * (self._max_caption_length - len(caption_tokens))
-        )
+        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+        inputs = tokenizer(caption, return_tensors="pt")
 
-        item: TrainingInstance = {
-            "image_id": image_id,
-            "image_features": image_features,
-            "caption_tokens": caption_tokens,
-        }
-        return item
+        inputs.update(
+        {
+            "visual_embeds": image_features,
+            "visual_token_type_ids": visual_token_type_ids,
+            "visual_attention_mask": visual_attention_mask,
+            "labels": label,
+        })
+        return inputs
 
-    def collate_fn(self, batch_list: List[TrainingInstance]) -> TrainingBatch:
+    '''
+    def collate_fn(self, batch_list):
         # Convert lists of ``image_id``s and ``caption_tokens``s as tensors.
         image_id = torch.tensor([instance["image_id"] for instance in batch_list]).long()
         caption_tokens = torch.tensor(
@@ -114,7 +118,7 @@ class TrainingDataset(Dataset):
             "caption_tokens": caption_tokens,
         }
         return batch
-
+    '''
 
 class EvaluationDataset(Dataset):
     r"""
@@ -148,14 +152,14 @@ class EvaluationDataset(Dataset):
     def __len__(self) -> int:
         return len(self._image_ids)
 
-    def __getitem__(self, index: int) -> EvaluationInstance:
+    def __getitem__(self, index: int):
         image_id = self._image_ids[index]
         image_features = self._image_features_reader[image_id]
 
         item: EvaluationInstance = {"image_id": image_id, "image_features": image_features}
         return item
 
-    def collate_fn(self, batch_list: List[EvaluationInstance]) -> EvaluationBatch:
+    def collate_fn(self, batch_list):
         # Convert lists of ``image_id``s and ``caption_tokens``s as tensors.
         image_id = torch.tensor([instance["image_id"] for instance in batch_list]).long()
 
