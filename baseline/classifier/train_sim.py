@@ -30,6 +30,7 @@ from updown.data.datasets import (
     EvaluationDataset,
     EvaluationDatasetWithConstraints,
 )
+import torch
 from updown.config import Config
 from allennlp.data import Vocabulary
 import transformers
@@ -47,7 +48,7 @@ from transformers import (
     get_scheduler,
     set_seed,
 )
-from transformers import VisualBertModel, VisualBertConfig
+from transformers import VisualBertForVisualReasoning, VisualBertConfig
 from transformers.utils import get_full_repo_name
 from transformers.utils.versions import require_version
 
@@ -71,13 +72,7 @@ task_to_keys = {
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Finetune a VisualBERT model on a text classification task")
-    parser.add_argument(
-        "--task_name",
-        type=str,
-        default=None,
-        help="The name of the glue task to train on.",
-        choices=list(task_to_keys.keys()),
-    )
+
     parser.add_argument(
     "--config", required=True, help="Path to a config file with all configuration parameters."
     )
@@ -92,7 +87,7 @@ def parse_args():
     parser.add_argument(
         "--max_length",
         type=int,
-        default=32,
+        default=512,
         help=(
             "The maximum total input sequence length after tokenization. Sequences longer than this will be truncated,"
             " sequences shorter will be padded if `--pad_to_max_lengh` is passed."
@@ -102,7 +97,7 @@ def parse_args():
     "--in-memory", action="store_true", help="Whether to load image features in memory."
     ) 
     parser.add_argument(
-    "--cpu-workers", type=int, default=0, help="Number of CPU workers to use for data loading."
+    "--cpu-workers", type=int, default=8, help="Number of CPU workers to use for data loading."
     )     
     parser.add_argument(
         "--pad_to_max_length",
@@ -123,7 +118,7 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=8,
+        default=32,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
@@ -162,14 +157,8 @@ def parse_args():
     parser.add_argument(
         "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
     )
-    parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
+    parser.add_argument("--output_dir", type=str, default="checkpoints/similarity", help="Where to store the final model.")
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
-    parser.add_argument("--push_to_hub", action="store_true", help="Whether or not to push the model to the Hub.")
-    parser.add_argument(
-        "--hub_model_id", type=str, help="The name of the repository to keep in sync with the local `output_dir`."
-    )
-    parser.add_argument("--hub_token", type=str, help="The token to use to push to the Model Hub.")
-    parser.add_argument("--hub_token", type=str, help="The token to use to push to the Model Hub.")
     parser.add_argument(
         "--checkpointing_steps",
         type=str,
@@ -188,20 +177,6 @@ def parse_args():
         help="Whether to load in all available experiment trackers from the environment and use them for logging.",
     )
     args = parser.parse_args()
-
-    # Sanity checks
-    if args.task_name is None and args.train_file is None and args.validation_file is None:
-        raise ValueError("Need either a task name or a training/validation file.")
-    else:
-        if args.train_file is not None:
-            extension = args.train_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`train_file` should be a csv or a json file."
-        if args.validation_file is not None:
-            extension = args.validation_file.split(".")[-1]
-            assert extension in ["csv", "json"], "`validation_file` should be a csv or a json file."
-
-    if args.push_to_hub:
-        assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
 
     return args
 
@@ -236,13 +211,7 @@ def main():
 
     # Handle the repository creation
     if accelerator.is_main_process:
-        if args.push_to_hub:
-            if args.hub_model_id is None:
-                repo_name = get_full_repo_name(Path(args.output_dir).name, token=args.hub_token)
-            else:
-                repo_name = args.hub_model_id
-            repo = Repository(args.output_dir, clone_from=repo_name)
-        elif args.output_dir is not None:
+        if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
@@ -258,18 +227,7 @@ def main():
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if args.task_name is not None:
-        # Downloading and loading a dataset from the hub.
-        raw_datasets = load_dataset("glue", args.task_name)
-    else:
-        # Loading the dataset from local csv or json file.
-        data_files = {}
-        if args.train_file is not None:
-            data_files["train"] = args.train_file
-        if args.validation_file is not None:
-            data_files["validation"] = args.validation_file
-        extension = (args.train_file if args.train_file is not None else args.valid_file).split(".")[-1]
-        raw_datasets = load_dataset(extension, data_files=data_files)
+
     # See more about loading any type of standard or custom dataset at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -281,39 +239,39 @@ def main():
     # download model & vocab.
  # config = AutoConfig.from_pretrained(args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name)
     # Initializing a VisualBERT visualbert-vqa-coco-pre style configuration
-    config = VisualBertConfig.from_pretrained("visualbert-vqa-coco-pre")
+    config = VisualBertConfig.from_pretrained("uclanlp/visualbert-vqa-coco-pre",
+        visual_embedding_dim=2048)
     tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name_or_path, 
+        "bert-base-uncased", 
         use_fast=not args.use_slow_tokenizer,
         padding="max_length", 
         max_length=args.max_length, 
         truncation=True)
-    model = VisualBertModel.from_pretrained(
-        args.model_name_or_path,
-        from_tf=bool(".ckpt" in args.model_name_or_path),
-        config=config,
+    model = VisualBertForVisualReasoning.from_pretrained(
+        "uclanlp/visualbert-vqa-coco-pre",
+        from_tf=False,
+        # config=config,
     )
 
     # Some models have set the order of the labels to use, so let's make sure we do use it.
     # label_to_id = {v: i for i, v in enumerate(label_list)}
 
-    data_collator = default_data_collator
-
 
     vocabulary = Vocabulary.from_files(_C.DATA.VOCABULARY)
-    dataset = TrainingDataset.from_config(_C, vocabulary=vocabulary, in_memory=args.in_memory)
-    train_size = len(dataset) * 0.9
-    test_size = len(dataset) * 0.1
-    train_dataset, eval_dataset = random_split(dataset, [train_size,test_size], generator=torch.Generator().manual_seed(42))
+    dataset = TrainingDataset.from_config(_C, vocabulary=vocabulary, in_memory=False)
+    train_size = int(len(dataset) * 0.9)
+    test_size = len(dataset) - train_size
+    dataset = dataset
+    train_dataset, eval_dataset = random_split(dataset, [train_size,test_size]) #or=torch.Generator().manual_seed(42))
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=_C.OPTIM.BATCH_SIZE,
         shuffle=True,
-        num_workers=args.cpu_workers,
-        collate_fn=data_collator,
+        num_workers=8,
+        collate_fn=dataset.collate_fn,
         # train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.per_device_train_batch_size
     )
-    eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size)
+    eval_dataloader = DataLoader(eval_dataset, collate_fn=dataset.collate_fn, batch_size=args.per_device_eval_batch_size)
 
 
     # Log a few random samples from the training set:
@@ -368,10 +326,7 @@ def main():
         accelerator.init_trackers("glue_no_trainer", args)
 
     # Get the metric function
-    if args.task_name is not None:
-        metric = load_metric("glue", args.task_name)
-    else:
-        metric = load_metric("accuracy")
+    metric = load_metric("accuracy")
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -419,6 +374,7 @@ def main():
             if args.with_tracking:
                 total_loss += loss.detach().float()
             loss = loss / args.gradient_accumulation_steps
+            print("current loss: " + str(loss))
             accelerator.backward(loss)
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optimizer.step()
@@ -435,13 +391,16 @@ def main():
                 break
 
         model.eval()
+        num_steps = 100
         for step, batch in enumerate(eval_dataloader):
             outputs = model(**batch)
-            predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
+            predictions = outputs.logits.argmax(dim=-1)
             metric.add_batch(
                 predictions=accelerator.gather(predictions),
                 references=accelerator.gather(batch["labels"]),
             )
+            if step >= num_steps:
+                break
 
         eval_metric = metric.compute()
         logger.info(f"epoch {epoch}: {eval_metric}")
@@ -449,13 +408,13 @@ def main():
         if args.with_tracking:
             accelerator.log(
                 {
-                    "accuracy" if args.task_name is not None else "glue": eval_metric,
+                    "accuracy": eval_metric,
                     "train_loss": total_loss,
                     "epoch": epoch,
                 },
                 step=completed_steps,
             )
-
+        '''
         if args.push_to_hub and epoch < args.num_train_epochs - 1:
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
@@ -465,7 +424,7 @@ def main():
                 repo.push_to_hub(
                     commit_message=f"Training in progress epoch {epoch}", blocking=False, auto_lfs_prune=True
                 )
-
+        '''
         if args.checkpointing_steps == "epoch":
             accelerator.save_state(f"epoch_{epoch}")
 
@@ -475,8 +434,6 @@ def main():
         unwrapped_model.save_pretrained(args.output_dir, save_function=accelerator.save)
         if accelerator.is_main_process:
             tokenizer.save_pretrained(args.output_dir)
-            if args.push_to_hub:
-                repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
 
 
 

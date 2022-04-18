@@ -14,7 +14,7 @@ from updown.types import (
     EvaluationBatchWithConstraints,
 )
 # from updown.utils.constraints import ConstraintFilter, FiniteStateMachineBuilder
-from transformers import BertTokenizer
+from transformers import BertTokenizer, default_data_collator
 
 class TrainingDataset(Dataset):
     r"""
@@ -48,12 +48,15 @@ class TrainingDataset(Dataset):
         captions_jsonpath: str,
         image_features_h5path: str,
         max_caption_length: int = 20,
-        in_memory: bool = True,
+        in_memory: bool = False,
     ) -> None:
         self._vocabulary = vocabulary
         self._image_features_reader = ImageFeaturesReader(image_features_h5path, in_memory)
         self._captions_reader = CocoCaptionsReader(captions_jsonpath)
-
+        self.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", 
+            padding="max_length", 
+            max_length=512, 
+            truncation=True)
         self._max_caption_length = max_caption_length
 
     @classmethod
@@ -84,14 +87,15 @@ class TrainingDataset(Dataset):
             image_features = self._image_features_reader[image_id]
             label = 0
 
-        visual_token_type_ids = torch.ones(image_features.shape[:-1], dtype=torch.long)
-        visual_attention_mask = torch.ones(image_features.shape[:-1], dtype=torch.float)
+        visual_token_type_ids = np.ones(image_features.shape[:-1], dtype=np.long)
+        visual_attention_mask = np.ones(image_features.shape[:-1], dtype=np.float)
 
-        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-        inputs = tokenizer(caption, return_tensors="pt")
-
+        inputs = self.tokenizer(" ".join(caption), return_tensors="pt", padding="max_length", max_length=512, truncation=True)
         inputs.update(
         {
+            "input_ids": inputs['input_ids'].squeeze(0),
+            "token_type_ids": inputs['token_type_ids'].squeeze(0),
+            "attention_mask": inputs['attention_mask'].squeeze(0),
             "visual_embeds": image_features,
             "visual_token_type_ids": visual_token_type_ids,
             "visual_attention_mask": visual_attention_mask,
@@ -99,26 +103,53 @@ class TrainingDataset(Dataset):
         })
         return inputs
 
-    '''
+
     def collate_fn(self, batch_list):
         # Convert lists of ``image_id``s and ``caption_tokens``s as tensors.
-        image_id = torch.tensor([instance["image_id"] for instance in batch_list]).long()
-        caption_tokens = torch.tensor(
-            [instance["caption_tokens"] for instance in batch_list]
-        ).long()
-
-        # Pad adaptive image features in the batch.
-        image_features = torch.from_numpy(
-            _collate_image_features([instance["image_features"] for instance in batch_list])
+        # image_id = torch.tensor([instance["image_id"] for instance in batch_list]).long()
+        batch = {}
+        keys = batch_list[0].keys()
+        visual_embeds = torch.from_numpy(
+        _collate_image_features([instance["visual_embeds"] for instance in batch_list])
         )
+        visual_attention_mask = torch.ones(visual_embeds.shape[:-1], dtype=torch.long)
+        visual_token_type_ids = torch.ones(visual_embeds.shape[:-1], dtype=torch.long)
+        for item in batch_list:
+            item.pop('visual_embeds')
+            item.pop('visual_token_type_ids')
+            item.pop('visual_attention_mask')
 
-        batch: TrainingBatch = {
-            "image_id": image_id,
-            "image_features": image_features,
-            "caption_tokens": caption_tokens,
-        }
+        batch = default_data_collator(batch_list)
+        batch.update({
+            "visual_embeds": visual_embeds,
+            "visual_token_type_ids": visual_token_type_ids,
+            "visual_attention_mask": visual_attention_mask,
+        })
+        print(batch['visual_embeds'].size())
+        '''
+        print(keys)
+        for key in keys:
+            print(key)
+            print(batch_list[0][key].shape)
+            if key != "visual_embeds":
+                if key == 'input_ids':
+                    tokens = torch.tensor(
+                    [instance[key].squeeze(0) for instance in batch_list]
+                    ).long()
+                else:
+                    tokens = torch.tensor(
+                    [instance[key] for instance in batch_list]
+                    ).long()
+                batch[key] = tokens
+            else:
+                # Pad adaptive image features in the batch.
+                image_features = torch.from_numpy(
+                _collate_image_features([instance["visual_embeds"] for instance in batch_list])
+                )
+                batch["visual_embeds"] = image_features
+        '''
         return batch
-    '''
+
 
 class EvaluationDataset(Dataset):
     r"""
