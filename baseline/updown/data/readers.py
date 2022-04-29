@@ -56,7 +56,6 @@ class ImageFeaturesReader(object):
         if self._in_memory:
             print(f"Loading image features from {self.features_h5path}...")
             features_h5 = h5py.File(self.features_h5path, "r")
-
             # If loading all features in memory at once, keep a mapping of image id to features.
             for index in tqdm(range(features_h5["image_id"].shape[0])):
                 self._map[features_h5["image_id"][index]] = features_h5["features"][index]
@@ -66,7 +65,7 @@ class ImageFeaturesReader(object):
         else:
             self.features_h5 = h5py.File(self.features_h5path, "r")
             image_id_np = np.array(self.features_h5["image_id"])
-
+            print(self.features_h5.keys())
             # If not loading all features in memory at once, just keep a mapping of image id to
             # index of features in H5 file.
             self._map = {image_id_np[index]: index for index in range(image_id_np.shape[0])}
@@ -186,3 +185,38 @@ class ConstraintBoxesReader(object):
         class_names = [self._class_names[ann["category_id"]] for ann in bbox_anns]
 
         return {"boxes": boxes, "class_names": class_names, "scores": scores}
+
+
+class CocoImagesReader(object):
+    r"""
+    A reader for image url files containing training captions. These are JSON files in COCO
+    format.
+
+    Parameters
+    ----------
+    captions_jsonpath : str
+        Path to a JSON file containing training images in COCO format (COCO train2017 usually).
+    """
+
+    def __init__(self, image_jsonpath: str) -> None:
+        self._image_jsonpath = image_jsonpath
+
+        with open(self._image_jsonpath) as img:
+            imgs_json: Dict[str, Any] = json.load(img)
+
+
+        # List of (image id, image_url) tuples.
+        self._images_url: List[Tuple[int, str]] = []
+
+        for image_item in tqdm(imgs_json["images"]):
+
+            image: str = image_item["coco_url"].lower().strip()
+
+            self._images_url.append((image_item["id"], image))
+
+    def __len__(self) -> int:
+        return len(self._images_url)
+
+    def __getitem__(self, index) -> Tuple[int, str]:
+        return self._images_url[index]
+

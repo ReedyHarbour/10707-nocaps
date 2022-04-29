@@ -9,7 +9,12 @@ numpy==1.15.4
 pillow==6.2.0
 tb-nightly
 tensorboardX==1.7   
-torch==1.1.0
+torch==1.5.0
+torchtext==0.2.3
+click==7.1.2
+numpy
 tqdm==4.28.1
 yacs==0.1.6
-© 2022 GitHub, Inc.
+datasets
+accelerate
+transformers
