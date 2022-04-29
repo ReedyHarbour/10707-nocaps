@@ -44,13 +44,11 @@ class TrainingDataset(Dataset):
 
     def __init__(
         self,
-        vocabulary: Vocabulary,
         captions_jsonpath: str,
         image_features_h5path: str,
         max_caption_length: int = 20,
         in_memory: bool = False,
     ) -> None:
-        self._vocabulary = vocabulary
         self._image_features_reader = ImageFeaturesReader(image_features_h5path, in_memory)
         self._captions_reader = CocoCaptionsReader(captions_jsonpath)
         self.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", 
@@ -63,9 +61,7 @@ class TrainingDataset(Dataset):
     def from_config(cls, config: Config, **kwargs):
         r"""Instantiate this class directly from a :class:`~updown.config.Config`."""
         _C = config
-        vocabulary = kwargs.pop("vocabulary")
         return cls(
-            vocabulary=vocabulary,
             image_features_h5path=_C.DATA.TRAIN_FEATURES,
             captions_jsonpath=_C.DATA.TRAIN_CAPTIONS,
             max_caption_length=_C.DATA.MAX_CAPTION_LENGTH,
@@ -125,7 +121,7 @@ class TrainingDataset(Dataset):
             "visual_token_type_ids": visual_token_type_ids,
             "visual_attention_mask": visual_attention_mask,
         })
-        print(batch['visual_embeds'].size())
+
         '''
         print(keys)
         for key in keys:

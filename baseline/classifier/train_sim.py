@@ -21,11 +21,11 @@ import random
 from pathlib import Path
 
 import datasets
-from datasets import load_dataset, load_metric
+from dataset import load_dataset, load_metric
 from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
 
-from updown.data.datasets import (
+from updown.data.datasets_for_classifier import (
     TrainingDataset,
     EvaluationDataset,
     EvaluationDatasetWithConstraints,
@@ -257,8 +257,8 @@ def main():
     # label_to_id = {v: i for i, v in enumerate(label_list)}
 
 
-    vocabulary = Vocabulary.from_files(_C.DATA.VOCABULARY)
-    dataset = TrainingDataset.from_config(_C, vocabulary=vocabulary, in_memory=False)
+    # vocabulary = Vocabulary.from_files(_C.DATA.VOCABULARY)
+    dataset = TrainingDataset.from_config(_C, in_memory=False)
     train_size = int(len(dataset) * 0.9)
     test_size = len(dataset) - train_size
     dataset = dataset
@@ -267,7 +267,7 @@ def main():
         train_dataset,
         batch_size=_C.OPTIM.BATCH_SIZE,
         shuffle=True,
-        num_workers=8,
+        num_workers=1,
         collate_fn=dataset.collate_fn,
         # train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.per_device_train_batch_size
     )
@@ -374,7 +374,6 @@ def main():
             if args.with_tracking:
                 total_loss += loss.detach().float()
             loss = loss / args.gradient_accumulation_steps
-            print("current loss: " + str(loss))
             accelerator.backward(loss)
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optimizer.step()
