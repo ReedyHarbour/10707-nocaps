@@ -4,7 +4,7 @@ from updown.data.readers import CocoCaptionsReader, ConstraintBoxesReader, Image
 import numpy as np
 import json
 import csv
-from train_sim_from_pretrained import VisualBertClassifier
+# from train_sim_from_pretrained import VisualBertClassifier
 # pretrained_path = "/data/10707-nocaps/baseline/checkpoints/similarity/"
 pretrained_path = "/data/10707-nocaps/baseline/checkpoints/sim_v2/"
 class VisualBertPrediction():
